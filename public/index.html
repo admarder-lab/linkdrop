@@ -272,8 +272,38 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const TAGS = ['AI Academy','Claude Skills','Inspiration','Tutorial','Watch Later'];
+const DEFAULT_TAGS = ['AI Academy','Claude Skills','Inspiration','Tutorial','Watch Later'];
 const TAG_CLS = {'AI Academy':'tag-ai-academy','Claude Skills':'tag-claude-skills','Inspiration':'tag-inspiration','Tutorial':'tag-tutorial','Watch Later':'tag-watch-later'};
+
+// Custom tags persist in localStorage
+function getAllTags() {
+  const custom = JSON.parse(localStorage.getItem('ld_custom_tags') || '[]');
+  return [...DEFAULT_TAGS, ...custom.filter(t => !DEFAULT_TAGS.includes(t))];
+}
+function addCustomTag(tag) {
+  const custom = JSON.parse(localStorage.getItem('ld_custom_tags') || '[]');
+  if (!custom.includes(tag) && !DEFAULT_TAGS.includes(tag)) {
+    custom.push(tag);
+    localStorage.setItem('ld_custom_tags', JSON.stringify(custom));
+  }
+}
+
+// Auto-tag: conservative — pick the ONE best-match tag, only if confident
+function autoTagFromTranscript(transcript) {
+  const t = transcript.toLowerCase();
+  const rules = [
+    { keywords: ['claude', 'anthropic', 'claude code', 'mcp', 'skill', 'artifact'], tag: 'Claude Skills', threshold: 2 },
+    { keywords: ['ai', 'artificial intelligence', 'machine learning', 'llm', 'gpt', 'gemini', 'model', 'neural', 'prompt', 'training'], tag: 'AI Academy', threshold: 3 },
+    { keywords: ['tutorial', 'how to', 'step by step', 'walkthrough', 'learn', 'beginner', 'guide', 'lesson'], tag: 'Tutorial', threshold: 2 },
+    { keywords: ['design', 'creative', 'inspiration', 'beautiful', 'aesthetic', 'art', 'motion', 'animation', 'typography'], tag: 'Inspiration', threshold: 3 },
+  ];
+  let best = null, bestScore = 0;
+  for (const r of rules) {
+    const hits = r.keywords.filter(k => t.includes(k)).length;
+    if (hits >= r.threshold && hits > bestScore) { best = r.tag; bestScore = hits; }
+  }
+  return best ? [best] : [];
+}
 const SVG = {
   x: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
   link: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>',
@@ -365,8 +395,10 @@ async function addLink() {
     const transcript = await fetchTranscript(url);
     if (transcript) {
       newLink.transcript = transcript;
+      const autoTags = autoTagFromTranscript(transcript);
+      if (autoTags.length) { newLink.tags = autoTags; }
       save(); render();
-      toast('Transcript loaded!');
+      toast(autoTags.length ? `Transcript loaded! Auto-tagged: ${autoTags[0]}` : 'Transcript loaded!');
     } else {
       toast('Saved! No transcript available for this video.');
     }
@@ -415,7 +447,7 @@ function render() {
     <span class="chip ${activeFilter==='all'?'active':''}" onclick="setFilter('all')">All<span class="chip-count">${links.length}</span></span>
     <span class="chip ${activeFilter==='unwatched'?'active':''}" onclick="setFilter('unwatched')">Unwatched<span class="chip-count">${uc}</span></span>
     <span class="chip ${activeFilter==='watched'?'active':''}" onclick="setFilter('watched')">Watched<span class="chip-count">${wc}</span></span>
-    ${TAGS.filter(t=>tc[t]).map(t=>`<span class="chip ${activeFilter===t?'active':''}" onclick="setFilter('${t}')">${t}<span class="chip-count">${tc[t]}</span></span>`).join('')}`;
+    ${Object.keys(tc).sort().map(t=>`<span class="chip ${activeFilter===t?'active':''}" onclick="setFilter('${t}')">${t}<span class="chip-count">${tc[t]}</span></span>`).join('')}`;
 
   // Grid
   const grid = document.getElementById('grid');
@@ -454,6 +486,14 @@ function render() {
 function setFilter(f) { activeFilter=f; render(); }
 function toggleWatched(i) { links[i].watched=!links[i].watched; save(); render(); toast(links[i].watched?'Marked watched':'Marked unwatched'); }
 function removeLink(i) { links.splice(i,1); save(); render(); toast('Removed'); }
+
+function addNewTag(i, tag) {
+  tag = tag.trim();
+  if (!tag) return;
+  addCustomTag(tag);
+  if (!links[i].tags.includes(tag)) { links[i].tags.push(tag); }
+  save(); openDetail(i);
+}
 
 // ===== DETAIL — S2A style =====
 function openDetail(i) {
@@ -504,7 +544,11 @@ function openDetail(i) {
         <div class="note-section">
           <label>Tags</label>
           <div class="tag-picker">
-            ${TAGS.map(t => `<span class="tag-pick ${l.tags.includes(t)?'sel':''}" onclick="toggleTag(${i},'${t}')">${t}</span>`).join('')}
+            ${getAllTags().map(t => `<span class="tag-pick ${l.tags.includes(t)?'sel':''}" onclick="toggleTag(${i},'${t}')">${t}</span>`).join('')}
+          </div>
+          <div style="display:flex;gap:0.5rem;margin-top:0.5rem">
+            <input type="text" id="customTagInput" class="desc-input" style="font-size:0.75rem;height:2rem;padding:0 0.5rem" placeholder="Add custom tag..." onkeydown="if(event.key==='Enter'){addNewTag(${i},this.value);this.value='';}" />
+            <button class="btn btn-sm" onclick="const inp=document.getElementById('customTagInput');addNewTag(${i},inp.value);inp.value='';">Add</button>
           </div>
         </div>
 

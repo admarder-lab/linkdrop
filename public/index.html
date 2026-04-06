@@ -330,6 +330,11 @@ const SVG = {
 };
 
 let links = JSON.parse(localStorage.getItem('ld_links') || '[]');
+// Normalize: ensure all IDs are strings, deduplicate by shortcode
+links.forEach(l => { l.id = String(l.id); });
+const _seen = new Set();
+links = links.filter(l => { if (_seen.has(l.shortcode)) return false; _seen.add(l.shortcode); return true; });
+localStorage.setItem('ld_links', JSON.stringify(links));
 let activeFilter = 'all';
 
 // --- Supabase ---
@@ -367,19 +372,23 @@ async function syncFromCloud() {
     if (!data || data.length === 0) {
       // First time: push localStorage to cloud
       if (links.length > 0) {
+        // Ensure all IDs are strings before pushing
+        links.forEach(l => { l.id = String(l.id); });
+        save();
         const rows = links.map(linkToRow);
         await sb.from('links').upsert(rows, { onConflict: 'id' });
         console.log('Pushed', rows.length, 'links to Supabase');
       }
       return;
     }
-    // Merge: use Supabase as source of truth, keep any local-only links
-    const cloudIds = new Set(data.map(r => r.id));
-    const localOnly = links.filter(l => !cloudIds.has(l.id));
+    // Merge: Supabase is source of truth. Deduplicate by shortcode (the real unique key).
+    const cloudShortcodes = new Set(data.map(r => r.shortcode));
+    const localOnly = links.filter(l => !cloudShortcodes.has(l.shortcode));
     links = data.map(rowToLink).concat(localOnly);
     localStorage.setItem('ld_links', JSON.stringify(links));
     // Push any local-only links to cloud
     if (localOnly.length > 0) {
+      localOnly.forEach(l => { l.id = String(l.id); });
       await sb.from('links').upsert(localOnly.map(linkToRow), { onConflict: 'id' });
     }
     render();
@@ -482,7 +491,7 @@ async function addLink() {
     : null;
 
   const newLink = {
-    id: Date.now(), shortcode: sc, url, source,
+    id: String(Date.now()), shortcode: sc, url, source,
     embedUrl, thumbUrl,
     tags: [], notes: '', description: '', transcript: '',
     watched: false,

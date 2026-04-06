@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
   <title>LinkDrop</title>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <style>
     :root {
       --bg:#0c0c10;--bg-muted:#1a1a22;--bg-card:rgba(255,255,255,0.04);
@@ -331,13 +332,87 @@ const SVG = {
 let links = JSON.parse(localStorage.getItem('ld_links') || '[]');
 let activeFilter = 'all';
 
+// --- Supabase ---
+const SUPABASE_URL = 'https://frxvziaoousfzqchnmfi.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZyeHZ6aWFvb3VzZnpxY2hubWZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0OTgzMzksImV4cCI6MjA5MTA3NDMzOX0.U3JrsdwBasIniGyvKezLJnv1jvcC-ofWqWPN69FxhnM';
+const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+
+function linkToRow(l) {
+  return {
+    id: l.id, shortcode: l.shortcode, url: l.url, source: l.source,
+    embed_url: l.embedUrl, thumb_url: l.thumbUrl || null,
+    description: l.description || '', notes: l.notes || '',
+    transcript: l.transcript || '', tags: l.tags || [],
+    watched: !!l.watched, saved_at: l.savedAt || new Date().toISOString(),
+    saved_display: l.savedDisplay || '', updated_at: new Date().toISOString()
+  };
+}
+function rowToLink(r) {
+  return {
+    id: r.id, shortcode: r.shortcode, url: r.url, source: r.source,
+    embedUrl: r.embed_url, thumbUrl: r.thumb_url || '',
+    description: r.description || '', notes: r.notes || '',
+    transcript: r.transcript || '', tags: r.tags || [],
+    watched: !!r.watched, savedAt: r.saved_at,
+    savedDisplay: r.saved_display || ''
+  };
+}
+
+// Sync from Supabase on load (merge with localStorage, Supabase wins on conflicts)
+async function syncFromCloud() {
+  if (!sb) return;
+  try {
+    const { data, error } = await sb.from('links').select('*').order('saved_at', { ascending: false });
+    if (error) { console.warn('Supabase fetch error:', error); return; }
+    if (!data || data.length === 0) {
+      // First time: push localStorage to cloud
+      if (links.length > 0) {
+        const rows = links.map(linkToRow);
+        await sb.from('links').upsert(rows, { onConflict: 'id' });
+        console.log('Pushed', rows.length, 'links to Supabase');
+      }
+      return;
+    }
+    // Merge: use Supabase as source of truth, keep any local-only links
+    const cloudIds = new Set(data.map(r => r.id));
+    const localOnly = links.filter(l => !cloudIds.has(l.id));
+    links = data.map(rowToLink).concat(localOnly);
+    localStorage.setItem('ld_links', JSON.stringify(links));
+    // Push any local-only links to cloud
+    if (localOnly.length > 0) {
+      await sb.from('links').upsert(localOnly.map(linkToRow), { onConflict: 'id' });
+    }
+    render();
+  } catch (e) { console.warn('Sync error:', e); }
+}
+
+// Save a single link to Supabase
+async function saveToCloud(link) {
+  if (!sb) return;
+  try {
+    await sb.from('links').upsert(linkToRow(link), { onConflict: 'id' });
+  } catch (e) { console.warn('Cloud save error:', e); }
+}
+
+// Delete from Supabase
+async function deleteFromCloud(id) {
+  if (!sb) return;
+  try { await sb.from('links').delete().eq('id', id); } catch (e) { console.warn('Cloud delete error:', e); }
+}
+
 function save() { localStorage.setItem('ld_links', JSON.stringify(links)); }
+let _cloudTimer = {};
+function debouncedCloudSave(i) {
+  clearTimeout(_cloudTimer[i]);
+  _cloudTimer[i] = setTimeout(() => saveToCloud(links[i]), 800);
+}
 function markDirty(btnId) {
   const b = document.getElementById(btnId);
   if (b) { b.textContent = 'Save'; b.classList.remove('saved'); }
 }
 function saveAll(i) {
   save();
+  saveToCloud(links[i]);
   const b = document.getElementById('mainSave');
   if (b) { b.textContent = 'Saved!'; b.classList.add('saved'); setTimeout(() => { b.textContent = 'Save'; b.classList.remove('saved'); }, 1500); }
 }
@@ -417,6 +492,7 @@ async function addLink() {
 
   links.unshift(newLink);
   save(); render();
+  saveToCloud(newLink);
   input.value = '';
 
   // Fetch transcript in background for YouTube
@@ -427,7 +503,7 @@ async function addLink() {
       newLink.transcript = transcript;
       const autoTags = autoTagFromTranscript(transcript);
       if (autoTags.length) { newLink.tags = autoTags; }
-      save(); render();
+      save(); saveToCloud(newLink); render();
       toast(autoTags.length ? `Transcript loaded! Auto-tagged: ${autoTags[0]}` : 'Transcript loaded!');
     } else {
       toast('Saved! No transcript available for this video.');
@@ -500,7 +576,7 @@ function render() {
       </div>
       <div class="card-body">
         <div class="card-tags">${l.tags.map(t=>`<span class="tag ${TAG_CLS[t]||'tag-other'}">${t}</span>`).join('')}</div>
-        <div class="card-desc"><input class="card-desc-input" type="text" value="${esc(l.description)}" placeholder="Add a description..." onclick="event.stopPropagation()" oninput="links[${i}].description=this.value;save()" /></div>
+        <div class="card-desc"><input class="card-desc-input" type="text" value="${esc(l.description)}" placeholder="Add a description..." onclick="event.stopPropagation()" oninput="links[${i}].description=this.value;save();debouncedCloudSave(${i})" /></div>
         ${l.notes ? `<div class="card-note">${l.notes}</div>` : ''}
         <div class="card-meta"><span class="${l.source==='youtube'?'yt-badge':l.source==='tiktok'?'tt-badge':'ig-badge'}">${l.source==='youtube'?'YT':l.source==='tiktok'?'TT':'IG'}</span><span>${l.savedDisplay}</span>${l.transcript?'<span style="opacity:0.6">· transcript</span>':''}</div>
       </div>
@@ -514,15 +590,15 @@ function render() {
 }
 
 function setFilter(f) { activeFilter=f; render(); }
-function toggleWatched(i) { links[i].watched=!links[i].watched; save(); render(); toast(links[i].watched?'Marked watched':'Marked unwatched'); }
-function removeLink(i) { links.splice(i,1); save(); render(); toast('Removed'); }
+function toggleWatched(i) { links[i].watched=!links[i].watched; save(); saveToCloud(links[i]); render(); toast(links[i].watched?'Marked watched':'Marked unwatched'); }
+function removeLink(i) { const id = links[i].id; links.splice(i,1); save(); deleteFromCloud(id); render(); toast('Removed'); }
 
 function addNewTag(i, tag) {
   tag = tag.trim();
   if (!tag) return;
   addCustomTag(tag);
   if (!links[i].tags.includes(tag)) { links[i].tags.push(tag); }
-  save(); openDetail(i);
+  save(); saveToCloud(links[i]); openDetail(i);
 }
 
 // ===== DETAIL — S2A style =====
@@ -588,8 +664,8 @@ function openDetail(i) {
         <div class="note-section">
           <label>Status</label>
           <div style="display:flex;gap:0.5rem">
-            <button class="btn btn-sm ${l.watched?'':'btn-brand'}" onclick="links[${i}].watched=false;save();openDetail(${i})">${SVG.eye} Unwatched</button>
-            <button class="btn btn-sm ${l.watched?'btn-brand':''}" onclick="links[${i}].watched=true;save();openDetail(${i})">${SVG.eye} Watched</button>
+            <button class="btn btn-sm ${l.watched?'':'btn-brand'}" onclick="links[${i}].watched=false;save();saveToCloud(links[${i}]);openDetail(${i})">${SVG.eye} Unwatched</button>
+            <button class="btn btn-sm ${l.watched?'btn-brand':''}" onclick="links[${i}].watched=true;save();saveToCloud(links[${i}]);openDetail(${i})">${SVG.eye} Watched</button>
           </div>
         </div>
 
@@ -637,7 +713,7 @@ function closeDetail() {
 function toggleTag(i, tag) {
   const l = links[i];
   l.tags.includes(tag) ? l.tags=l.tags.filter(t=>t!==tag) : l.tags.push(tag);
-  save(); openDetail(i);
+  save(); saveToCloud(l); openDetail(i);
 }
 
 function copyUrl(i) { navigator.clipboard.writeText(links[i].url); toast('URL copied!'); }
@@ -647,7 +723,7 @@ async function refetchTranscript(i) {
   const transcript = await fetchTranscript(links[i].url);
   if (transcript) {
     links[i].transcript = transcript;
-    save(); openDetail(i);
+    save(); saveToCloud(links[i]); openDetail(i);
     toast('Transcript loaded!');
   } else {
     toast('No transcript available for this video.');
@@ -678,6 +754,7 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m;t.cla
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDetail();});
 
 render();
+syncFromCloud();
 </script>
 
 </body>

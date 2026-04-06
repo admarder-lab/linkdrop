@@ -135,6 +135,7 @@
     .card-meta{font-size:0.6875rem;color:var(--fg-muted);display:flex;align-items:center;gap:0.5rem}
     .ig-badge{display:inline-flex;align-items:center;font-size:0.5625rem;font-weight:600;padding:0.0625rem 0.375rem;border-radius:4px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);color:#fff;opacity:0.85}
     .yt-badge{display:inline-flex;align-items:center;font-size:0.5625rem;font-weight:600;padding:0.0625rem 0.375rem;border-radius:4px;background:#ff0000;color:#fff;opacity:0.85}
+    .tt-badge{display:inline-flex;align-items:center;font-size:0.5625rem;font-weight:600;padding:0.0625rem 0.375rem;border-radius:4px;background:#000;color:#69c9d0;opacity:0.85;border:1px solid #69c9d0}
     .card-actions{display:flex;gap:0.25rem;padding:0.5rem 0.75rem 0.75rem;border-top:1px solid var(--border)}
 
     /* DETAIL VIEW — S2A style */
@@ -234,7 +235,7 @@
     <div class="save-box">
       <label>Save a new link</label>
       <div class="add-bar">
-        <input type="text" class="add-input" id="urlInput" placeholder="Paste an Instagram or YouTube link..." onkeydown="if(event.key==='Enter')addLink()" />
+        <input type="text" class="add-input" id="urlInput" placeholder="Paste an Instagram, YouTube, or TikTok link..." onkeydown="if(event.key==='Enter')addLink()" />
         <button class="btn btn-brand" id="addBtn" onclick="addLink()" style="height:2.5rem;padding:0 1rem">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
           Save
@@ -260,7 +261,7 @@
   <div class="empty" id="emptyState">
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>
     <h3>Your collection is empty</h3>
-    <p>Paste an Instagram or YouTube URL to start building your visual library.</p>
+    <p>Paste an Instagram, YouTube, or TikTok URL to start building your visual library.</p>
   </div>
 </div>
 
@@ -335,9 +336,16 @@ function parseYT(url) {
   return m ? m[1] : null;
 }
 
+function parseTT(url) {
+  // TikTok URLs: tiktok.com/@user/video/1234567890, vm.tiktok.com/ZMhXYZ/, tiktok.com/t/ZMhXYZ/
+  const m = url.match(/tiktok\.com\/@[\w.]+\/video\/(\d+)/) || url.match(/tiktok\.com\/(?:t\/|@[\w.]+\/video\/)?([\w-]+)/);
+  return m ? (m[1] || m[2]) : null;
+}
+
 function detectSource(url) {
   if (parseIG(url)) return 'instagram';
   if (parseYT(url)) return 'youtube';
+  if (parseTT(url)) return 'tiktok';
   return null;
 }
 
@@ -360,9 +368,11 @@ async function addLink() {
   if (!url) { toast('Paste a URL first'); return; }
 
   const source = detectSource(url);
-  if (!source) { toast("Paste an Instagram or YouTube URL"); return; }
+  if (!source) { toast("Paste an Instagram, YouTube, or TikTok URL"); return; }
 
-  const sc = source === 'instagram' ? parseIG(url) : parseYT(url);
+  const sc = source === 'instagram' ? parseIG(url)
+    : source === 'youtube' ? parseYT(url)
+    : parseTT(url);
   if (links.find(l => l.shortcode === sc)) { toast('Already saved!'); return; }
 
   btn.innerHTML = '<span class="loading-spinner"></span>';
@@ -370,7 +380,9 @@ async function addLink() {
 
   const embedUrl = source === 'instagram'
     ? `https://www.instagram.com/p/${sc}/embed/`
-    : `https://www.youtube.com/embed/${sc}`;
+    : source === 'youtube'
+    ? `https://www.youtube.com/embed/${sc}`
+    : `https://www.tiktok.com/embed/v2/${sc}`;
 
   const thumbUrl = source === 'youtube'
     ? `https://img.youtube.com/vi/${sc}/hqdefault.jpg`
@@ -472,7 +484,7 @@ function render() {
         <div class="card-tags">${l.tags.map(t=>`<span class="tag ${TAG_CLS[t]||'tag-other'}">${t}</span>`).join('')}</div>
         <div class="card-desc">${l.description || '<span style="color:var(--fg-muted);font-weight:400">Tap to describe...</span>'}</div>
         ${l.notes ? `<div class="card-note">${l.notes}</div>` : ''}
-        <div class="card-meta"><span class="${l.source==='youtube'?'yt-badge':'ig-badge'}">${l.source==='youtube'?'YT':'IG'}</span><span>${l.savedDisplay}</span>${l.transcript?'<span style="opacity:0.6">· transcript</span>':''}</div>
+        <div class="card-meta"><span class="${l.source==='youtube'?'yt-badge':l.source==='tiktok'?'tt-badge':'ig-badge'}">${l.source==='youtube'?'YT':l.source==='tiktok'?'TT':'IG'}</span><span>${l.savedDisplay}</span>${l.transcript?'<span style="opacity:0.6">· transcript</span>':''}</div>
       </div>
       <div class="card-actions">
         <a href="${l.url}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-ghost" onclick="event.stopPropagation()">${SVG.open} Open</a>

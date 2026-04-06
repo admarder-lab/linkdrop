@@ -534,7 +534,8 @@ function openDetail(i) {
     <div class="detail-title">
       <input class="desc-input" type="text" value="${esc(l.description)}"
         placeholder="Describe this in one sentence..."
-        onchange="links[${i}].description=this.value;save();render()" />
+        oninput="links[${i}].description=this.value;save()"
+        onblur="links[${i}].description=this.value;save()" />
     </div>
 
     <!-- Hero grid: video + metadata -->
@@ -549,7 +550,8 @@ function openDetail(i) {
         <div class="note-section">
           <label>My Note</label>
           <textarea class="note-input" placeholder="What caught your eye? What do you want to try from this?"
-            onchange="links[${i}].notes=this.value;save();render()">${l.notes}</textarea>
+            oninput="links[${i}].notes=this.value;save()"
+            onblur="links[${i}].notes=this.value;save()">${l.notes}</textarea>
         </div>
 
         <!-- Tags -->
